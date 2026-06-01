@@ -2,6 +2,7 @@
   "name": "qrgen",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@8.8.0",
   "scripts": {

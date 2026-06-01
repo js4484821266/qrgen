@@ -532,13 +532,20 @@ function App() {
               </span>
               <div>
                 <h1>QR Studio</h1>
-                <p>Static QR generator for GitHub Pages</p>
+                <p>No ads. No malware. No tracking. No uploads.</p>
               </div>
             </div>
             <button className="icon-button" type="button" onClick={resetDesign} title="Reset design">
               <RotateCcw size={18} aria-hidden="true" />
             </button>
           </header>
+
+          <section className="trust-strip" aria-label="Trust notes">
+            <span>No ads</span>
+            <span>No malware</span>
+            <span>No tracking</span>
+            <span>Local files only</span>
+          </section>
 
           <section className="panel primary-panel" aria-labelledby="data-heading">
             <div className="panel-heading">
