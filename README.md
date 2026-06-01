@@ -7,6 +7,8 @@ QR Studio is a static QR code generator made because random QR generator apps ar
 ## Features
 
 - Static GitHub Pages hosting with no backend, PHP, login, or database
+- Content presets for text, URL, phone, SMS, email, Wi-Fi, vCard, geo location, calendar events, and custom raw payloads
+- Strict validation so ambiguous QR payloads do not get generated silently
 - Error correction level control: `L`, `M`, `Q`, `H`
 - Local logo image insertion with size, margin, and hidden-background-dot controls
 - QR-grid-aligned dot text for center or corner placement

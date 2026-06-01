@@ -204,7 +204,11 @@ label strong,
   font-weight: 800;
 }
 
+input[type="datetime-local"],
+input[type="email"],
+input[type="tel"],
 input[type="text"],
+input[type="url"],
 select {
   width: 100%;
   min-height: 42px;
@@ -213,6 +217,37 @@ select {
   padding: 0 11px;
   color: #17212b;
   background: #ffffff;
+}
+
+textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  border: 1px solid rgba(23, 33, 43, 0.16);
+  border-radius: 8px;
+  padding: 14px;
+  color: #17212b;
+  background: #ffffff;
+}
+
+.payload-preview {
+  min-height: 92px;
+  color: #364153;
+  background: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.payload-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #7f1d1d;
+  background: #fee2e2;
+  font-size: 0.86rem;
+  font-weight: 800;
 }
 
 input[type="range"] {

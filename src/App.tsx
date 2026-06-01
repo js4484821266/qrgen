@@ -23,6 +23,17 @@ type DotType =
 type CornerSquareType = "square" | "dot" | "extra-rounded";
 type CornerDotType = "square" | "dot";
 type TextPosition = "center" | "bottom-right" | "top-right" | "bottom-left" | "top-left";
+type ContentType =
+  | "text"
+  | "url"
+  | "phone"
+  | "sms"
+  | "email"
+  | "wifi"
+  | "vcard"
+  | "geo"
+  | "calendar"
+  | "custom";
 type QrCodeWithInternals = QRCodeStyling & {
   _qr?: {
     getModuleCount: () => number;
@@ -30,8 +41,42 @@ type QrCodeWithInternals = QRCodeStyling & {
   _canvasDrawingPromise?: Promise<void>;
 };
 
+type ContentFields = {
+  text: string;
+  url: string;
+  phone: string;
+  smsPhone: string;
+  smsMessage: string;
+  emailTo: string;
+  emailSubject: string;
+  emailBody: string;
+  wifiSecurity: "WPA" | "WEP" | "nopass";
+  wifiSsid: string;
+  wifiPassword: string;
+  wifiHidden: boolean;
+  vFirstName: string;
+  vLastName: string;
+  vDisplayName: string;
+  vPhone: string;
+  vEmail: string;
+  vOrg: string;
+  vUrl: string;
+  geoLat: string;
+  geoLng: string;
+  eventTitle: string;
+  eventStart: string;
+  eventEnd: string;
+  eventLocation: string;
+  eventDescription: string;
+  custom: string;
+};
+
 type QrState = {
   data: string;
+  contentType: ContentType;
+  contentFields: ContentFields;
+  payloadPreview: string;
+  payloadError: string;
   size: number;
   margin: number;
   errorCorrection: ErrorCorrectionLevel;
@@ -54,8 +99,42 @@ type QrState = {
   dotTextRound: boolean;
 };
 
+const initialContentFields: ContentFields = {
+  text: "Hello from QR Studio",
+  url: "https://example.com",
+  phone: "+82 10-1234-5678",
+  smsPhone: "+82 10-1234-5678",
+  smsMessage: "Hello",
+  emailTo: "hello@example.com",
+  emailSubject: "Hello",
+  emailBody: "Generated with QR Studio",
+  wifiSecurity: "WPA",
+  wifiSsid: "",
+  wifiPassword: "",
+  wifiHidden: false,
+  vFirstName: "",
+  vLastName: "",
+  vDisplayName: "",
+  vPhone: "",
+  vEmail: "",
+  vOrg: "",
+  vUrl: "",
+  geoLat: "37.5665",
+  geoLng: "126.9780",
+  eventTitle: "",
+  eventStart: "",
+  eventEnd: "",
+  eventLocation: "",
+  eventDescription: "",
+  custom: "https://example.com",
+};
+
 const initialState: QrState = {
   data: "https://example.com",
+  contentType: "url",
+  contentFields: initialContentFields,
+  payloadPreview: "https://example.com",
+  payloadError: "",
   size: 768,
   margin: 22,
   errorCorrection: "H",
@@ -96,6 +175,19 @@ const dotTypes: DotType[] = [
 
 const cornerSquareTypes: CornerSquareType[] = ["square", "dot", "extra-rounded"];
 const cornerDotTypes: CornerDotType[] = ["square", "dot"];
+
+const contentTypes: Array<{ value: ContentType; label: string }> = [
+  { value: "text", label: "Text" },
+  { value: "url", label: "URL" },
+  { value: "phone", label: "Phone" },
+  { value: "sms", label: "SMS" },
+  { value: "email", label: "Email" },
+  { value: "wifi", label: "Wi-Fi" },
+  { value: "vcard", label: "vCard" },
+  { value: "geo", label: "Geo" },
+  { value: "calendar", label: "Calendar" },
+  { value: "custom", label: "Custom" },
+];
 
 const textPositions: Array<{ value: TextPosition; label: string }> = [
   { value: "center", label: "Center" },
@@ -139,6 +231,177 @@ function buildQrOptions(state: QrState, logoUrl: string | null, type: "canvas" |
       type: state.cornerDotType,
     },
   };
+}
+
+function escapeQrField(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+}
+
+function normalizePhone(value: string, fieldName = "Phone") {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${fieldName} is required.`);
+  }
+
+  if (!/^\+?[0-9\s\-()]+$/.test(trimmed)) {
+    throw new Error(`${fieldName} can contain only digits, spaces, hyphens, parentheses, and one leading +.`);
+  }
+
+  if ((trimmed.match(/\+/g) ?? []).length > 1 || (trimmed.includes("+") && !trimmed.startsWith("+"))) {
+    throw new Error(`${fieldName} can use + only at the beginning.`);
+  }
+
+  const normalized = trimmed.replace(/[\s\-()]/g, "");
+  if (!/^\+?[0-9]{3,20}$/.test(normalized)) {
+    throw new Error(`${fieldName} must contain 3 to 20 digits.`);
+  }
+
+  return normalized;
+}
+
+function requireValue(value: string, fieldName: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${fieldName} is required.`);
+  }
+  return trimmed;
+}
+
+function validateEmailAddress(value: string, required = true) {
+  const trimmed = value.trim();
+  if (!trimmed && !required) {
+    return "";
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    throw new Error("Email address is invalid.");
+  }
+  return trimmed;
+}
+
+function validateHttpUrl(value: string, fieldName = "URL", required = true) {
+  const trimmed = value.trim();
+  if (!trimmed && !required) {
+    return "";
+  }
+  if (!/^https?:\/\//i.test(trimmed)) {
+    throw new Error(`${fieldName} must start with http:// or https://.`);
+  }
+  try {
+    return new URL(trimmed).toString();
+  } catch {
+    throw new Error(`${fieldName} is invalid.`);
+  }
+}
+
+function validateCoordinate(value: string, min: number, max: number, fieldName: string) {
+  const trimmed = requireValue(value, fieldName);
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    throw new Error(`${fieldName} must be a number.`);
+  }
+  const numberValue = Number(trimmed);
+  if (numberValue < min || numberValue > max) {
+    throw new Error(`${fieldName} must be between ${min} and ${max}.`);
+  }
+  return trimmed;
+}
+
+function formatLocalDateTime(value: string, fieldName: string) {
+  const trimmed = requireValue(value, fieldName);
+  const date = new Date(trimmed);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${fieldName} is invalid.`);
+  }
+  const [datePart, timePart] = trimmed.split("T");
+  return `${datePart.replace(/-/g, "")}T${timePart.replace(/:/g, "")}00`;
+}
+
+function buildContentPayload(type: ContentType, fields: ContentFields) {
+  switch (type) {
+    case "text":
+      return requireValue(fields.text, "Text");
+    case "url":
+      return validateHttpUrl(fields.url);
+    case "phone":
+      return `tel:${normalizePhone(fields.phone)}`;
+    case "sms":
+      return `SMSTO:${normalizePhone(fields.smsPhone, "SMS phone")}:${fields.smsMessage}`;
+    case "email": {
+      const to = validateEmailAddress(fields.emailTo);
+      return `MATMSG:TO:${escapeQrField(to)};SUB:${escapeQrField(fields.emailSubject)};BODY:${escapeQrField(fields.emailBody)};;`;
+    }
+    case "wifi": {
+      const ssid = requireValue(fields.wifiSsid, "Wi-Fi SSID");
+      if (fields.wifiSecurity !== "nopass") {
+        requireValue(fields.wifiPassword, "Wi-Fi password");
+      }
+      return `WIFI:T:${fields.wifiSecurity};S:${escapeQrField(ssid)};P:${escapeQrField(fields.wifiPassword)};H:${fields.wifiHidden ? "true" : "false"};;`;
+    }
+    case "vcard": {
+      const firstName = fields.vFirstName.trim();
+      const lastName = fields.vLastName.trim();
+      const displayName = fields.vDisplayName.trim() || [firstName, lastName].filter(Boolean).join(" ");
+      if (!displayName) {
+        throw new Error("vCard name is required.");
+      }
+      const lines = ["BEGIN:VCARD", "VERSION:3.0", `N:${escapeQrField(lastName)};${escapeQrField(firstName)}`, `FN:${escapeQrField(displayName)}`];
+      if (fields.vPhone.trim()) {
+        lines.push(`TEL:${normalizePhone(fields.vPhone, "vCard phone")}`);
+      }
+      if (fields.vEmail.trim()) {
+        lines.push(`EMAIL:${validateEmailAddress(fields.vEmail, false)}`);
+      }
+      if (fields.vOrg.trim()) {
+        lines.push(`ORG:${escapeQrField(fields.vOrg.trim())}`);
+      }
+      if (fields.vUrl.trim()) {
+        lines.push(`URL:${validateHttpUrl(fields.vUrl, "vCard URL", false)}`);
+      }
+      lines.push("END:VCARD");
+      return lines.join("\n");
+    }
+    case "geo":
+      return `geo:${validateCoordinate(fields.geoLat, -90, 90, "Latitude")},${validateCoordinate(fields.geoLng, -180, 180, "Longitude")}`;
+    case "calendar": {
+      const title = requireValue(fields.eventTitle, "Event title");
+      const start = requireValue(fields.eventStart, "Start time");
+      const end = requireValue(fields.eventEnd, "End time");
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        throw new Error("Event dates are invalid.");
+      }
+      if (endDate <= startDate) {
+        throw new Error("End time must be after start time.");
+      }
+      const lines = [
+        "BEGIN:VEVENT",
+        `SUMMARY:${escapeQrField(title)}`,
+        `DTSTART:${formatLocalDateTime(start, "Start time")}`,
+        `DTEND:${formatLocalDateTime(end, "End time")}`,
+      ];
+      if (fields.eventLocation.trim()) {
+        lines.push(`LOCATION:${escapeQrField(fields.eventLocation.trim())}`);
+      }
+      if (fields.eventDescription.trim()) {
+        lines.push(`DESCRIPTION:${escapeQrField(fields.eventDescription.trim())}`);
+      }
+      lines.push("END:VEVENT");
+      return lines.join("\n");
+    }
+    case "custom":
+      return requireValue(fields.custom, "Custom payload");
+  }
+}
+
+function getPayloadResult(type: ContentType, fields: ContentFields) {
+  try {
+    return { payload: buildContentPayload(type, fields), error: "" };
+  } catch (error) {
+    return {
+      payload: "",
+      error: error instanceof Error ? error.message : "Payload is invalid.",
+    };
+  }
 }
 
 const pixelGlyphs: Record<string, string[]> = {
@@ -422,6 +685,7 @@ function App() {
   const overlayEnabled = logoEnabled || (state.dotTextEnabled && state.dotText.trim().length > 0);
   const largeLogoRisk = logoEnabled && state.logoSize > 0.34;
   const lowCorrectionRisk = overlayEnabled && state.errorCorrection !== "H";
+  const payloadInvalid = Boolean(state.payloadError);
   const cornerTextRisk =
     state.dotTextEnabled &&
     state.dotText.trim().length > 0 &&
@@ -440,6 +704,37 @@ function App() {
       container.innerHTML = "";
     };
   }, [qrCode]);
+
+  useEffect(() => {
+    const result = getPayloadResult(state.contentType, state.contentFields);
+    setState((current) => {
+      if (result.error) {
+        if (current.payloadError === result.error && current.payloadPreview === "") {
+          return current;
+        }
+        return {
+          ...current,
+          payloadPreview: "",
+          payloadError: result.error,
+        };
+      }
+
+      if (
+        current.data === result.payload &&
+        current.payloadPreview === result.payload &&
+        current.payloadError === ""
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        data: result.payload,
+        payloadPreview: result.payload,
+        payloadError: "",
+      };
+    });
+  }, [state.contentFields, state.contentType]);
 
   useEffect(() => {
     qrCode.update(buildQrOptions(state, logoUrl));
@@ -462,10 +757,24 @@ function App() {
     setState((current) => ({ ...current, ...patch }));
   }
 
+  function patchContentFields(patch: Partial<ContentFields>) {
+    setState((current) => ({
+      ...current,
+      contentFields: {
+        ...current.contentFields,
+        ...patch,
+      },
+    }));
+  }
+
   function resetDesign() {
     setState((current) => ({
       ...initialState,
       data: current.data,
+      contentType: current.contentType,
+      contentFields: current.contentFields,
+      payloadPreview: current.payloadPreview,
+      payloadError: current.payloadError,
     }));
     if (logoUrl) {
       URL.revokeObjectURL(logoUrl);
@@ -502,6 +811,10 @@ function App() {
   }
 
   async function downloadPng() {
+    if (payloadInvalid) {
+      return;
+    }
+
     const sourceCanvas = previewRef.current?.querySelector("canvas");
     if (!(sourceCanvas instanceof HTMLCanvasElement)) {
       return;
@@ -517,6 +830,10 @@ function App() {
   }
 
   async function downloadSvg() {
+    if (payloadInvalid) {
+      return;
+    }
+
     const svgQrCode = new QRCodeStyling(buildQrOptions(state, logoUrl, "svg"));
     await svgQrCode.download({ name: "qrgen", extension: "svg" });
   }
@@ -552,12 +869,42 @@ function App() {
               <QrCode size={18} aria-hidden="true" />
               <h2 id="data-heading">Data</h2>
             </div>
-            <textarea
-              value={state.data}
-              onChange={(event) => patchState({ data: event.currentTarget.value })}
-              aria-label="QR data"
-              spellCheck={false}
+            <label>
+              <span>Content type</span>
+              <select
+                value={state.contentType}
+                onChange={(event) =>
+                  patchState({ contentType: event.currentTarget.value as ContentType })
+                }
+              >
+                {contentTypes.map((contentType) => (
+                  <option key={contentType.value} value={contentType.value}>
+                    {contentType.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <ContentFieldsEditor
+              type={state.contentType}
+              fields={state.contentFields}
+              onChange={patchContentFields}
             />
+            {state.payloadError ? (
+              <p className="payload-error">
+                <AlertTriangle size={15} aria-hidden="true" />
+                {state.payloadError}
+              </p>
+            ) : null}
+            <label>
+              <span>Generated payload</span>
+              <textarea
+                className="payload-preview"
+                value={state.payloadPreview || state.data}
+                aria-label="Generated QR payload"
+                readOnly
+                spellCheck={false}
+              />
+            </label>
             <div className="field-grid two">
               <label>
                 <span>Size</span>
@@ -854,11 +1201,11 @@ function App() {
               <h2>{state.size}px QR</h2>
             </div>
             <div className="download-actions">
-              <button type="button" onClick={downloadPng}>
+              <button type="button" onClick={downloadPng} disabled={payloadInvalid}>
                 <Download size={18} aria-hidden="true" />
                 <span>PNG</span>
               </button>
-              <button type="button" onClick={downloadSvg}>
+              <button type="button" onClick={downloadSvg} disabled={payloadInvalid}>
                 <Download size={18} aria-hidden="true" />
                 <span>SVG</span>
               </button>
@@ -902,6 +1249,318 @@ function ColorField({
         onChange={(event) => onChange(event.currentTarget.value)}
       />
       <strong>{value}</strong>
+    </label>
+  );
+}
+
+function ContentFieldsEditor({
+  type,
+  fields,
+  onChange,
+}: {
+  type: ContentType;
+  fields: ContentFields;
+  onChange: (patch: Partial<ContentFields>) => void;
+}) {
+  if (type === "text") {
+    return (
+      <label>
+        <span>Text</span>
+        <textarea
+          value={fields.text}
+          onChange={(event) => onChange({ text: event.currentTarget.value })}
+          spellCheck={false}
+        />
+      </label>
+    );
+  }
+
+  if (type === "url") {
+    return (
+      <label>
+        <span>URL</span>
+        <input
+          type="url"
+          value={fields.url}
+          placeholder="https://example.com"
+          onChange={(event) => onChange({ url: event.currentTarget.value })}
+        />
+      </label>
+    );
+  }
+
+  if (type === "phone") {
+    return (
+      <label>
+        <span>Phone number</span>
+        <input
+          type="tel"
+          value={fields.phone}
+          placeholder="+82 10-1234-5678"
+          onChange={(event) => onChange({ phone: event.currentTarget.value })}
+        />
+      </label>
+    );
+  }
+
+  if (type === "sms") {
+    return (
+      <>
+        <label>
+          <span>SMS phone</span>
+          <input
+            type="tel"
+            value={fields.smsPhone}
+            placeholder="+82 10-1234-5678"
+            onChange={(event) => onChange({ smsPhone: event.currentTarget.value })}
+          />
+        </label>
+        <label>
+          <span>Message</span>
+          <textarea
+            value={fields.smsMessage}
+            onChange={(event) => onChange({ smsMessage: event.currentTarget.value })}
+          />
+        </label>
+      </>
+    );
+  }
+
+  if (type === "email") {
+    return (
+      <>
+        <label>
+          <span>To</span>
+          <input
+            type="email"
+            value={fields.emailTo}
+            placeholder="hello@example.com"
+            onChange={(event) => onChange({ emailTo: event.currentTarget.value })}
+          />
+        </label>
+        <div className="field-grid two">
+          <label>
+            <span>Subject</span>
+            <input
+              type="text"
+              value={fields.emailSubject}
+              onChange={(event) => onChange({ emailSubject: event.currentTarget.value })}
+            />
+          </label>
+          <label>
+            <span>Body</span>
+            <input
+              type="text"
+              value={fields.emailBody}
+              onChange={(event) => onChange({ emailBody: event.currentTarget.value })}
+            />
+          </label>
+        </div>
+      </>
+    );
+  }
+
+  if (type === "wifi") {
+    return (
+      <>
+        <div className="field-grid two">
+          <label>
+            <span>Security</span>
+            <select
+              value={fields.wifiSecurity}
+              onChange={(event) =>
+                onChange({ wifiSecurity: event.currentTarget.value as ContentFields["wifiSecurity"] })
+              }
+            >
+              <option value="WPA">WPA/WPA2</option>
+              <option value="WEP">WEP</option>
+              <option value="nopass">No password</option>
+            </select>
+          </label>
+          <label>
+            <span>SSID</span>
+            <input
+              type="text"
+              value={fields.wifiSsid}
+              onChange={(event) => onChange({ wifiSsid: event.currentTarget.value })}
+            />
+          </label>
+        </div>
+        <label>
+          <span>Password</span>
+          <input
+            type="text"
+            value={fields.wifiPassword}
+            disabled={fields.wifiSecurity === "nopass"}
+            onChange={(event) => onChange({ wifiPassword: event.currentTarget.value })}
+          />
+        </label>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={fields.wifiHidden}
+            onChange={(event) => onChange({ wifiHidden: event.currentTarget.checked })}
+          />
+          <span>Hidden network</span>
+        </label>
+      </>
+    );
+  }
+
+  if (type === "vcard") {
+    return (
+      <>
+        <div className="field-grid two">
+          <label>
+            <span>First name</span>
+            <input
+              type="text"
+              value={fields.vFirstName}
+              onChange={(event) => onChange({ vFirstName: event.currentTarget.value })}
+            />
+          </label>
+          <label>
+            <span>Last name</span>
+            <input
+              type="text"
+              value={fields.vLastName}
+              onChange={(event) => onChange({ vLastName: event.currentTarget.value })}
+            />
+          </label>
+        </div>
+        <label>
+          <span>Display name</span>
+          <input
+            type="text"
+            value={fields.vDisplayName}
+            onChange={(event) => onChange({ vDisplayName: event.currentTarget.value })}
+          />
+        </label>
+        <div className="field-grid two">
+          <label>
+            <span>Phone</span>
+            <input
+              type="tel"
+              value={fields.vPhone}
+              onChange={(event) => onChange({ vPhone: event.currentTarget.value })}
+            />
+          </label>
+          <label>
+            <span>Email</span>
+            <input
+              type="email"
+              value={fields.vEmail}
+              onChange={(event) => onChange({ vEmail: event.currentTarget.value })}
+            />
+          </label>
+        </div>
+        <div className="field-grid two">
+          <label>
+            <span>Organization</span>
+            <input
+              type="text"
+              value={fields.vOrg}
+              onChange={(event) => onChange({ vOrg: event.currentTarget.value })}
+            />
+          </label>
+          <label>
+            <span>URL</span>
+            <input
+              type="url"
+              value={fields.vUrl}
+              placeholder="https://example.com"
+              onChange={(event) => onChange({ vUrl: event.currentTarget.value })}
+            />
+          </label>
+        </div>
+      </>
+    );
+  }
+
+  if (type === "geo") {
+    return (
+      <div className="field-grid two">
+        <label>
+          <span>Latitude</span>
+          <input
+            type="text"
+            value={fields.geoLat}
+            placeholder="37.5665"
+            onChange={(event) => onChange({ geoLat: event.currentTarget.value })}
+          />
+        </label>
+        <label>
+          <span>Longitude</span>
+          <input
+            type="text"
+            value={fields.geoLng}
+            placeholder="126.9780"
+            onChange={(event) => onChange({ geoLng: event.currentTarget.value })}
+          />
+        </label>
+      </div>
+    );
+  }
+
+  if (type === "calendar") {
+    return (
+      <>
+        <label>
+          <span>Event title</span>
+          <input
+            type="text"
+            value={fields.eventTitle}
+            onChange={(event) => onChange({ eventTitle: event.currentTarget.value })}
+          />
+        </label>
+        <div className="field-grid two">
+          <label>
+            <span>Start</span>
+            <input
+              type="datetime-local"
+              value={fields.eventStart}
+              onChange={(event) => onChange({ eventStart: event.currentTarget.value })}
+            />
+          </label>
+          <label>
+            <span>End</span>
+            <input
+              type="datetime-local"
+              value={fields.eventEnd}
+              onChange={(event) => onChange({ eventEnd: event.currentTarget.value })}
+            />
+          </label>
+        </div>
+        <div className="field-grid two">
+          <label>
+            <span>Location</span>
+            <input
+              type="text"
+              value={fields.eventLocation}
+              onChange={(event) => onChange({ eventLocation: event.currentTarget.value })}
+            />
+          </label>
+          <label>
+            <span>Description</span>
+            <input
+              type="text"
+              value={fields.eventDescription}
+              onChange={(event) => onChange({ eventDescription: event.currentTarget.value })}
+            />
+          </label>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <label>
+      <span>Raw payload</span>
+      <textarea
+        value={fields.custom}
+        onChange={(event) => onChange({ custom: event.currentTarget.value })}
+        spellCheck={false}
+      />
     </label>
   );
 }
