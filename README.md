@@ -1,50 +1,50 @@
 # QR Studio
 
-No ads. No malware. No tracking. No uploads.
+광고 없음. 악성코드 없음. 추적 없음. 업로드 없음.
 
-QR Studio is a static QR code generator made because random QR generator apps are hard to trust. Everything runs in your browser: the QR data, uploaded logo images, colors, and generated downloads stay local to your device.
+QR Studio는 신뢰하기 어려운 무작위 QR 생성기 앱들 때문에 만든 정적 QR 코드 생성기입니다. 모든 것은 브라우저 안에서 실행됩니다. QR 데이터, 업로드한 로고 이미지, 색상, 생성된 다운로드 파일은 모두 사용자의 기기 안에만 남습니다.
 
-## Features
+## 기능
 
-- Static GitHub Pages hosting with no backend, PHP, login, or database
-- Content presets for text, URL, phone, SMS, email, Wi-Fi, vCard, geo location, calendar events, and custom raw payloads
-- Strict validation so ambiguous QR payloads do not get generated silently
-- Error correction level control: `L`, `M`, `Q`, `H`
-- Local logo image insertion with size, margin, and hidden-background-dot controls
-- QR-grid-aligned dot text for center or corner placement
-- Dot, corner, eye, foreground, and background styling
-- PNG download with final logo and dot text composition
-- SVG download for the base styled QR code
+* 백엔드, PHP, 로그인, 데이터베이스 없이 정적 GitHub Pages 호스팅
+* 텍스트, URL, 전화번호, SMS, 이메일, Wi-Fi, vCard, 지리 위치, 캘린더 이벤트, 사용자 지정 원시 페이로드용 콘텐츠 프리셋
+* 모호한 QR 페이로드가 조용히 생성되지 않도록 하는 엄격한 검증
+* 오류 정정 레벨 제어: `L`, `M`, `Q`, `H`
+* 크기, 여백, 배경 점 숨김 제어가 가능한 로컬 로고 이미지 삽입
+* 중앙 또는 모서리 배치를 위한 QR 그리드 정렬 점 텍스트
+* 점, 모서리, 눈, 전경, 배경 스타일링
+* 최종 로고와 점 텍스트 합성이 포함된 PNG 다운로드
+* 기본 스타일 QR 코드의 SVG 다운로드
 
-## Trust Model
+## 신뢰 모델
 
-This project is intentionally small and inspectable.
+이 프로젝트는 의도적으로 작고 검토하기 쉽게 만들어졌습니다.
 
-- No ads: there is no ad script or ad network integration.
-- No tracking: there is no analytics script.
-- No uploads: image files are loaded locally in the browser.
-- No server storage: GitHub Pages only serves static files.
-- No account system: there is no signup, login, or database.
+* 광고 없음: 광고 스크립트나 광고 네트워크 연동이 없습니다.
+* 추적 없음: 분석 스크립트가 없습니다.
+* 업로드 없음: 이미지 파일은 브라우저에서 로컬로만 불러옵니다.
+* 서버 저장 없음: GitHub Pages는 정적 파일만 제공합니다.
+* 계정 시스템 없음: 회원가입, 로그인, 데이터베이스가 없습니다.
 
-## Development
+## 개발
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Build for GitHub Pages:
+GitHub Pages용 빌드:
 
 ```bash
 pnpm build
 ```
 
-The Vite base path is configured as `/qrgen/` for a project page such as:
+Vite 기본 경로는 다음과 같은 프로젝트 페이지를 위해 `/qrgen/`으로 설정되어 있습니다.
 
 ```text
 https://<user>.github.io/qrgen/
 ```
 
-## License
+## 라이선스
 
-MIT License. See [LICENSE](./LICENSE).
+MIT License. 자세한 내용은 [LICENSE](./LICENSE)를 참조하세요.
