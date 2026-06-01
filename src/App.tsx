@@ -23,6 +23,12 @@ type DotType =
 type CornerSquareType = "square" | "dot" | "extra-rounded";
 type CornerDotType = "square" | "dot";
 type TextPosition = "center" | "bottom-right" | "top-right" | "bottom-left" | "top-left";
+type QrCodeWithInternals = QRCodeStyling & {
+  _qr?: {
+    getModuleCount: () => number;
+  };
+  _canvasDrawingPromise?: Promise<void>;
+};
 
 type QrState = {
   data: string;
@@ -68,7 +74,7 @@ const initialState: QrState = {
   dotText: "QR",
   dotTextPosition: "bottom-right",
   dotTextSize: 44,
-  dotTextColor: "#ae2012",
+  dotTextColor: "#17212b",
   dotTextRound: false,
 };
 
@@ -135,110 +141,262 @@ function buildQrOptions(state: QrState, logoUrl: string | null, type: "canvas" |
   };
 }
 
-function setCanvasFont(context: CanvasRenderingContext2D, fontSize: number) {
-  context.font = `800 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
-  context.textBaseline = "middle";
-  context.textAlign = "center";
+const pixelGlyphs: Record<string, string[]> = {
+  "0": ["111", "101", "101", "101", "111"],
+  "1": ["010", "110", "010", "010", "111"],
+  "2": ["111", "001", "111", "100", "111"],
+  "3": ["111", "001", "111", "001", "111"],
+  "4": ["101", "101", "111", "001", "001"],
+  "5": ["111", "100", "111", "001", "111"],
+  "6": ["111", "100", "111", "101", "111"],
+  "7": ["111", "001", "010", "010", "010"],
+  "8": ["111", "101", "111", "101", "111"],
+  "9": ["111", "101", "111", "001", "111"],
+  A: ["010", "101", "111", "101", "101"],
+  B: ["110", "101", "110", "101", "110"],
+  C: ["111", "100", "100", "100", "111"],
+  D: ["110", "101", "101", "101", "110"],
+  E: ["111", "100", "110", "100", "111"],
+  F: ["111", "100", "110", "100", "100"],
+  G: ["111", "100", "101", "101", "111"],
+  H: ["101", "101", "111", "101", "101"],
+  I: ["111", "010", "010", "010", "111"],
+  J: ["001", "001", "001", "101", "111"],
+  K: ["101", "101", "110", "101", "101"],
+  L: ["100", "100", "100", "100", "111"],
+  M: ["101", "111", "111", "101", "101"],
+  N: ["101", "111", "111", "111", "101"],
+  O: ["111", "101", "101", "101", "111"],
+  P: ["111", "101", "111", "100", "100"],
+  Q: ["111", "101", "101", "111", "001"],
+  R: ["111", "101", "111", "110", "101"],
+  S: ["111", "100", "111", "001", "111"],
+  T: ["111", "010", "010", "010", "010"],
+  U: ["101", "101", "101", "101", "111"],
+  V: ["101", "101", "101", "101", "010"],
+  W: ["101", "101", "111", "111", "101"],
+  X: ["101", "101", "010", "101", "101"],
+  Y: ["101", "101", "010", "010", "010"],
+  Z: ["111", "001", "010", "100", "111"],
+  "-": ["000", "000", "111", "000", "000"],
+  ".": ["000", "000", "000", "000", "010"],
+  " ": ["000", "000", "000", "000", "000"],
+};
+
+type PixelTextLayout = {
+  text: string;
+  glyphScale: number;
+  cols: number;
+  rows: number;
+  moduleCount: number;
+  moduleSize: number;
+  startCol: number;
+  startRow: number;
+  quietModules: number;
+  bgColor: string;
+};
+
+function normalizeDotText(text: string) {
+  return text
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9 .-]/g, "")
+    .slice(0, 8);
 }
 
-function measureDotText(
-  text: string,
-  fontSize: number,
-  canvas: HTMLCanvasElement,
-): { width: number; height: number } {
-  const context = canvas.getContext("2d");
-  if (!context) {
-    return { width: fontSize * text.length, height: fontSize };
-  }
+function getGlyph(text: string) {
+  return text
+    .split("")
+    .map((char) => pixelGlyphs[char] ?? pixelGlyphs[" "])
+    .filter(Boolean);
+}
 
-  setCanvasFont(context, fontSize);
+function getPixelTextSize(text: string, glyphScale: number) {
+  const glyphs = getGlyph(text);
+  const glyphWidth = 3 * glyphScale;
+  const gap = glyphScale;
   return {
-    width: Math.ceil(context.measureText(text).width),
-    height: Math.ceil(fontSize * 1.18),
+    cols: glyphs.length * glyphWidth + Math.max(0, glyphs.length - 1) * gap + glyphScale * 2,
+    rows: 5 * glyphScale + glyphScale * 2,
   };
 }
 
-function getTextAnchor(
-  position: TextPosition,
-  size: number,
-  textWidth: number,
-  textHeight: number,
-): { x: number; y: number } {
-  const edge = Math.max(18, Math.round(size * 0.045));
-
-  if (position === "center") {
-    return { x: size / 2 - textWidth / 2, y: size / 2 - textHeight / 2 };
+function getPixelTextLayout(state: QrState, moduleCount: number): PixelTextLayout | null {
+  const text = normalizeDotText(state.dotText);
+  if (!state.dotTextEnabled || !text) {
+    return null;
   }
 
-  if (position === "bottom-right") {
-    return { x: size - edge - textWidth, y: size - edge - textHeight };
+  const targetModules = Math.max(7, Math.round(state.dotTextSize / 5.2));
+  const glyphScale = Math.max(1, Math.min(5, Math.floor(targetModules / 7)));
+  const { cols, rows } = getPixelTextSize(text, glyphScale);
+  const quietModules = Math.max(1, Math.floor(glyphScale / 2));
+  const inset = Math.max(1, Math.round(moduleCount * 0.04));
+  const protectedFinder = 9;
+  let startCol = moduleCount - inset - cols;
+  let startRow = moduleCount - inset - rows;
+
+  if (state.dotTextPosition === "center") {
+    startCol = Math.round((moduleCount - cols) / 2);
+    startRow = Math.round((moduleCount - rows) / 2);
+  } else if (state.dotTextPosition === "top-right") {
+    startCol = moduleCount - inset - cols;
+    startRow = protectedFinder;
+  } else if (state.dotTextPosition === "bottom-left") {
+    startCol = protectedFinder;
+    startRow = moduleCount - inset - rows;
+  } else if (state.dotTextPosition === "top-left") {
+    startCol = protectedFinder;
+    startRow = protectedFinder;
   }
 
-  if (position === "top-right") {
-    return { x: size - edge - textWidth, y: edge };
-  }
+  startCol = Math.max(0, Math.min(moduleCount - cols, startCol));
+  startRow = Math.max(0, Math.min(moduleCount - rows, startRow));
 
-  if (position === "bottom-left") {
-    return { x: edge, y: size - edge - textHeight };
-  }
-
-  return { x: edge, y: edge };
+  return {
+    text,
+    glyphScale,
+    cols,
+    rows,
+    moduleCount,
+    moduleSize: (state.size - state.margin * 2) / moduleCount,
+    startCol,
+    startRow,
+    quietModules,
+    bgColor: state.transparentBackground ? "rgba(255,255,255,0)" : state.backgroundColor,
+  };
 }
 
 function drawDotText(
   context: CanvasRenderingContext2D,
   state: QrState,
-  measureCanvas: HTMLCanvasElement,
+  moduleCount: number,
 ) {
-  if (!state.dotTextEnabled || !state.dotText.trim()) {
+  const layout = getPixelTextLayout(state, moduleCount);
+  if (!layout) {
     return;
   }
 
-  const text = state.dotText.trim().slice(0, 18);
-  const textSize = measureDotText(text, state.dotTextSize, measureCanvas);
-  const offscreen = document.createElement("canvas");
-  const padding = Math.ceil(state.dotTextSize * 0.22);
-  offscreen.width = textSize.width + padding * 2;
-  offscreen.height = textSize.height + padding * 2;
-
-  const offscreenContext = offscreen.getContext("2d");
-  if (!offscreenContext) {
-    return;
-  }
-
-  setCanvasFont(offscreenContext, state.dotTextSize);
-  offscreenContext.fillStyle = state.dotTextColor;
-  offscreenContext.fillText(text, offscreen.width / 2, offscreen.height / 2);
-
-  const imageData = offscreenContext.getImageData(0, 0, offscreen.width, offscreen.height);
-  const step = Math.max(3, Math.floor(state.dotTextSize / 8));
-  const dot = Math.max(2, Math.floor(step * 0.72));
-  const anchor = getTextAnchor(
-    state.dotTextPosition,
-    state.size,
-    offscreen.width,
-    offscreen.height,
+  const cell = layout.moduleSize;
+  const clearCol = Math.max(0, layout.startCol - layout.quietModules);
+  const clearRow = Math.max(0, layout.startRow - layout.quietModules);
+  const clearCols = Math.min(
+    layout.moduleCount - clearCol,
+    layout.cols + layout.quietModules * 2,
   );
+  const clearRows = Math.min(
+    layout.moduleCount - clearRow,
+    layout.rows + layout.quietModules * 2,
+  );
+  const clearX = state.margin + clearCol * cell;
+  const clearY = state.margin + clearRow * cell;
 
-  context.fillStyle = state.dotTextColor;
-  for (let y = 0; y < offscreen.height; y += step) {
-    for (let x = 0; x < offscreen.width; x += step) {
-      const alphaIndex = (y * offscreen.width + x) * 4 + 3;
-      if (imageData.data[alphaIndex] < 92) {
-        continue;
-      }
-
-      const drawX = anchor.x + x;
-      const drawY = anchor.y + y;
-      if (state.dotTextRound) {
-        context.beginPath();
-        context.arc(drawX + dot / 2, drawY + dot / 2, dot / 2, 0, Math.PI * 2);
-        context.fill();
-      } else {
-        context.fillRect(drawX, drawY, dot, dot);
-      }
-    }
+  context.save();
+  context.clearRect(clearX, clearY, clearCols * cell, clearRows * cell);
+  if (!state.transparentBackground) {
+    context.fillStyle = layout.bgColor;
+    context.fillRect(clearX, clearY, clearCols * cell, clearRows * cell);
   }
+
+  const glyphs = getGlyph(layout.text);
+  const radius = state.dotTextRound ? cell * 0.45 : 0;
+  context.fillStyle = state.dotTextColor;
+  glyphs.forEach((glyph, glyphIndex) => {
+    const glyphOffsetCol =
+      layout.startCol + layout.glyphScale + glyphIndex * 4 * layout.glyphScale;
+    glyph.forEach((row, y) => {
+      row.split("").forEach((value, x) => {
+        if (value !== "1") {
+          return;
+        }
+
+        for (let scaleY = 0; scaleY < layout.glyphScale; scaleY += 1) {
+          for (let scaleX = 0; scaleX < layout.glyphScale; scaleX += 1) {
+            const moduleCol = glyphOffsetCol + x * layout.glyphScale + scaleX;
+            const moduleRow = layout.startRow + layout.glyphScale + y * layout.glyphScale + scaleY;
+            const drawX = state.margin + moduleCol * cell;
+            const drawY = state.margin + moduleRow * cell;
+
+            if (state.dotTextRound) {
+              context.beginPath();
+              context.arc(drawX + cell / 2, drawY + cell / 2, radius, 0, Math.PI * 2);
+              context.fill();
+            } else {
+              context.fillRect(
+                Math.round(drawX),
+                Math.round(drawY),
+                Math.ceil(cell),
+                Math.ceil(cell),
+              );
+            }
+          }
+        }
+      });
+    });
+  });
+  context.restore();
+}
+
+async function applyDotTextToQrCanvas(
+  qrCode: QrCodeWithInternals,
+  canvas: HTMLCanvasElement | null | undefined,
+  state: QrState,
+) {
+  if (!canvas || !state.dotTextEnabled) {
+    return;
+  }
+
+  await qrCode._canvasDrawingPromise;
+  const context = canvas.getContext("2d");
+  const moduleCount = qrCode._qr?.getModuleCount();
+  if (!context || !moduleCount) {
+    return;
+  }
+
+  drawDotText(context, state, moduleCount);
+}
+
+async function createPngWithDotText(
+  qrCode: QrCodeWithInternals,
+  state: QrState,
+): Promise<Blob | null> {
+  const rawData = await qrCode.getRawData("png");
+  if (!(rawData instanceof Blob)) {
+    return null;
+  }
+
+  const image = await createImageBitmap(rawData);
+  const canvas = document.createElement("canvas");
+  canvas.width = state.size;
+  canvas.height = state.size;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    image.close();
+    return null;
+  }
+
+  if (!state.transparentBackground) {
+    context.fillStyle = state.backgroundColor;
+    context.fillRect(0, 0, state.size, state.size);
+  }
+
+  context.drawImage(image, 0, 0);
+  image.close();
+
+  const moduleCount = qrCode._qr?.getModuleCount();
+  if (moduleCount) {
+    drawDotText(context, state, moduleCount);
+  }
+
+  return new Promise((resolve) => {
+    canvas.toBlob(resolve, "image/png");
+  });
+}
+
+function getCanvasBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    canvas.toBlob(resolve, "image/png");
+  });
 }
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -254,9 +412,11 @@ function App() {
   const [state, setState] = useState<QrState>(initialState);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
-  const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const qrCode = useMemo(() => new QRCodeStyling(buildQrOptions(initialState, null)), []);
+  const qrCode = useMemo(
+    () => new QRCodeStyling(buildQrOptions(initialState, null)) as QrCodeWithInternals,
+    [],
+  );
 
   const logoEnabled = Boolean(logoUrl);
   const overlayEnabled = logoEnabled || (state.dotTextEnabled && state.dotText.trim().length > 0);
@@ -283,6 +443,11 @@ function App() {
 
   useEffect(() => {
     qrCode.update(buildQrOptions(state, logoUrl));
+    void applyDotTextToQrCanvas(
+      qrCode,
+      previewRef.current?.querySelector("canvas"),
+      state,
+    );
   }, [logoUrl, qrCode, state]);
 
   useEffect(() => {
@@ -342,28 +507,13 @@ function App() {
       return;
     }
 
-    const outputCanvas = document.createElement("canvas");
-    outputCanvas.width = state.size;
-    outputCanvas.height = state.size;
-    const context = outputCanvas.getContext("2d");
-    if (!context) {
-      return;
+    const blob = state.dotTextEnabled
+      ? await createPngWithDotText(qrCode, state)
+      : await getCanvasBlob(sourceCanvas);
+
+    if (blob) {
+      triggerDownload(blob, "qrgen.png");
     }
-
-    if (!state.transparentBackground) {
-      context.fillStyle = state.backgroundColor;
-      context.fillRect(0, 0, state.size, state.size);
-    }
-
-    context.drawImage(sourceCanvas, 0, 0, state.size, state.size);
-    const measureCanvas = measureCanvasRef.current ?? document.createElement("canvas");
-    drawDotText(context, state, measureCanvas);
-
-    outputCanvas.toBlob((blob) => {
-      if (blob) {
-        triggerDownload(blob, "qrgen.png");
-      }
-    }, "image/png");
   }
 
   async function downloadSvg() {
@@ -710,9 +860,6 @@ function App() {
 
           <div className="qr-stage">
             <div className="qr-frame" ref={previewRef} />
-            {state.dotTextEnabled && state.dotText.trim() && (
-              <DotTextPreview state={state} measureCanvasRef={measureCanvasRef} />
-            )}
           </div>
 
           <div className="preview-footer">
@@ -723,7 +870,6 @@ function App() {
           </div>
         </aside>
       </section>
-      <canvas ref={measureCanvasRef} className="measure-canvas" aria-hidden="true" />
     </main>
   );
 }
@@ -750,39 +896,6 @@ function ColorField({
       />
       <strong>{value}</strong>
     </label>
-  );
-}
-
-function DotTextPreview({
-  state,
-  measureCanvasRef,
-}: {
-  state: QrState;
-  measureCanvasRef: React.RefObject<HTMLCanvasElement | null>;
-}) {
-  const text = state.dotText.trim().slice(0, 18);
-  const canvas = measureCanvasRef.current ?? document.createElement("canvas");
-  const measured = measureDotText(text, state.dotTextSize, canvas);
-  const padding = Math.ceil(state.dotTextSize * 0.22);
-  const width = measured.width + padding * 2;
-  const height = measured.height + padding * 2;
-  const anchor = getTextAnchor(state.dotTextPosition, state.size, width, height);
-
-  return (
-    <span
-      className={`dot-text-preview ${state.dotTextRound ? "round" : ""}`}
-      style={{
-        color: state.dotTextColor,
-        width: `${(width / state.size) * 100}%`,
-        height: `${(height / state.size) * 100}%`,
-        left: `${(anchor.x / state.size) * 100}%`,
-        top: `${(anchor.y / state.size) * 100}%`,
-        fontSize: `${(state.dotTextSize / state.size) * 100}%`,
-      }}
-      aria-hidden="true"
-    >
-      {text}
-    </span>
   );
 }
 
